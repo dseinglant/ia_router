@@ -1,0 +1,21 @@
+name: ia_router
+description: Provider-blind LLM/TTS client. Hosts pass an API key only.
+version: 0.6.0
+homepage: https://github.com/dseinglant/ia_router
+
+environment:
+  sdk: ^3.10.1
+  flutter: ">=1.17.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_secure_storage: ^9.2.4
+  http: ^1.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
