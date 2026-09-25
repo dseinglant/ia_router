@@ -21,6 +21,7 @@ final class CloudflareLlmAdapter implements LlmClient {
     this.baseUri = RouterDefaults.baseUri,
     this.credentialSlot = RouterDefaults.llmCredentialSlot,
     this.runModel = RouterDefaults.llmModel,
+    this.fallbackModel,
     bool allowInsecureBaseUri = false,
     /// Gemma 4+ / reasoning models burn max_tokens on CoT unless false.
     this.enableThinking = false,
@@ -28,6 +29,9 @@ final class CloudflareLlmAdapter implements LlmClient {
         _http = httpClient ?? AiHttpClient() {
     validateCloudflareBaseUri(baseUri, allowInsecure: allowInsecureBaseUri);
     validateCloudflareAccountId(accountId);
+    if (fallbackModel != null) {
+      validateCloudflareModelId(fallbackModel!);
+    }
   }
 
   final String accountId;
@@ -36,13 +40,16 @@ final class CloudflareLlmAdapter implements LlmClient {
   final String baseUri;
   final String credentialSlot;
   final String runModel;
+
+  /// Fallback model used when primary returns model-not-found or deprecated.
+  final String? fallbackModel;
   final bool enableThinking;
 
-  Uri _runUri() {
+  Uri _runUri([String? modelOverride]) {
     return buildCloudflareRunUri(
       baseUri: baseUri,
       accountId: accountId,
-      model: runModel,
+      model: modelOverride ?? runModel,
     );
   }
 
@@ -81,10 +88,52 @@ final class CloudflareLlmAdapter implements LlmClient {
       bearerToken: token,
       body: _body(request, stream: false),
     );
+    if (_shouldFallback(response.statusCode, response.body)) {
+      return _completeWithFallback(request, token);
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throwForStatus(response);
     }
     return _parseComplete(response.body);
+  }
+
+  Future<ChatResponse> _completeWithFallback(
+    ChatRequest request,
+    String token,
+  ) async {
+    if (fallbackModel == null) {
+      throw const AiProviderException(
+        'Model deprecated or not found, no fallback configured',
+      );
+    }
+    developer.log(
+      'primary model $runModel unavailable, falling back to $fallbackModel',
+      name: 'CloudflareLlm',
+      level: 800,
+    );
+    final response = await _http.postJson(
+      uri: _runUri(fallbackModel),
+      bearerToken: token,
+      body: _body(request, stream: false),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throwForStatus(response);
+    }
+    return _parseComplete(response.body);
+  }
+
+  bool _shouldFallback(int statusCode, String body) {
+    if (statusCode == 404) return true;
+    if (statusCode == 400 || statusCode == 410) {
+      final lower = body.toLowerCase();
+      if (lower.contains('deprecated') ||
+          lower.contains('not found') ||
+          lower.contains('model not available') ||
+          lower.contains('unknown model')) {
+        return true;
+      }
+    }
+    return false;
   }
 
   ChatResponse _parseComplete(String raw) {
@@ -352,10 +401,46 @@ final class CloudflareLlmAdapter implements LlmClient {
 
     if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
       final errBody = await streamed.stream.bytesToString();
+      if (_shouldFallback(streamed.statusCode, errBody)) {
+        yield* _completeStreamWithFallback(request, token);
+        return;
+      }
       throwForStreamStatus(streamed, errBody);
     }
 
-    final lines = streamed.stream
+    yield* _parseStreamResponse(streamed.stream);
+  }
+
+  Stream<ChatStreamChunk> _completeStreamWithFallback(
+    ChatRequest request,
+    String token,
+  ) async* {
+    if (fallbackModel == null) {
+      throw const AiProviderException(
+        'Model deprecated or not found, no fallback configured',
+      );
+    }
+    developer.log(
+      'primary model $runModel unavailable, falling back to $fallbackModel',
+      name: 'CloudflareLlm',
+      level: 800,
+    );
+    final streamed = await _http.postJsonStream(
+      uri: _runUri(fallbackModel),
+      bearerToken: token,
+      body: _body(request, stream: true),
+    );
+    if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+      final errBody = await streamed.stream.bytesToString();
+      throwForStreamStatus(streamed, errBody);
+    }
+    yield* _parseStreamResponse(streamed.stream);
+  }
+
+  Stream<ChatStreamChunk> _parseStreamResponse(
+    Stream<List<int>> responseStream,
+  ) async* {
+    final lines = responseStream
         .transform(utf8.decoder)
         .transform(const LineSplitter());
 

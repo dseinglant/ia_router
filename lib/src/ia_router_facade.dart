@@ -29,11 +29,16 @@ abstract final class IaRouter {
   static String? _ttsBaseUriOverride;
   static bool _allowInsecureBaseUri = false;
   static AiClientPair? _clients;
+  static String? _llmModelOverride;
 
   /// Persists [llmToken] and [ttsToken] in secure storage and wires clients.
+  ///
+  /// [llmModel] overrides the default Workers AI model (Gemma 4 26B).
+  /// Leave null to use the compile-time default or `--dart-define=IA_MODEL`.
   static Future<void> configure({
     required String llmToken,
     required String ttsToken,
+    String? llmModel,
   }) async {
     final llm = llmToken.trim();
     final tts = ttsToken.trim();
@@ -43,6 +48,7 @@ abstract final class IaRouter {
     if (tts.isEmpty) {
       throw ArgumentError.value(ttsToken, 'ttsToken', 'must not be empty');
     }
+    _llmModelOverride = llmModel;
     await _credentials.write(RouterDefaults.llmCredentialSlot, llm);
     await _credentials.write(RouterDefaults.ttsCredentialSlot, tts);
     _clients = _wire();
@@ -93,6 +99,8 @@ abstract final class IaRouter {
       httpClient: _http,
       baseUri: _baseUriOverride ?? RouterDefaults.baseUri,
       ttsBaseUri: _ttsBaseUriOverride ?? RouterDefaults.ttsBaseUri,
+      llmModel: _llmModelOverride ?? RouterDefaults.llmModel,
+      llmFallbackModel: RouterDefaults.llmFallbackModel,
       allowInsecureBaseUri: _allowInsecureBaseUri,
     );
   }
@@ -105,6 +113,7 @@ abstract final class IaRouter {
     String? accountId,
     String? baseUri,
     String? ttsBaseUri,
+    String? llmModel,
     bool allowInsecureBaseUri = false,
   }) {
     _credentials = credentials ?? MemoryCredentialStore();
@@ -112,6 +121,7 @@ abstract final class IaRouter {
     _accountIdOverride = accountId;
     _baseUriOverride = baseUri;
     _ttsBaseUriOverride = ttsBaseUri;
+    _llmModelOverride = llmModel;
     _allowInsecureBaseUri = allowInsecureBaseUri;
     _clients = null;
   }
@@ -124,6 +134,7 @@ abstract final class IaRouter {
     _accountIdOverride = null;
     _baseUriOverride = null;
     _ttsBaseUriOverride = null;
+    _llmModelOverride = null;
     _allowInsecureBaseUri = false;
     _clients = null;
   }

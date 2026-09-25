@@ -12,12 +12,17 @@ abstract final class AiClients {
   /// LLM on Cloudflare Workers AI, TTS on Google Cloud Text-to-Speech.
   ///
   /// [baseUri] must be `https` unless [allowInsecureBaseUri] is true (tests).
+  /// [llmModel] overrides the default Workers AI model.
+  /// [llmFallbackModel] is used when the primary model returns a deprecated or
+  /// model-not-found error.
   static AiClientPair create({
     required String accountId,
     CredentialStore? credentials,
     AiHttpClient? httpClient,
     String baseUri = RouterDefaults.baseUri,
     String ttsBaseUri = RouterDefaults.ttsBaseUri,
+    String llmModel = RouterDefaults.llmModel,
+    String? llmFallbackModel,
     bool allowInsecureBaseUri = false,
   }) {
     validateCloudflareBaseUri(baseUri, allowInsecure: allowInsecureBaseUri);
@@ -31,6 +36,8 @@ abstract final class AiClients {
         httpClient: http,
         baseUri: baseUri,
         credentialSlot: RouterDefaults.llmCredentialSlot,
+        runModel: llmModel,
+        fallbackModel: llmFallbackModel,
         allowInsecureBaseUri: allowInsecureBaseUri,
       ),
       tts: GoogleTtsAdapter(

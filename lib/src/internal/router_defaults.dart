@@ -21,7 +21,20 @@ abstract final class RouterDefaults {
   /// Google Cloud Text-to-Speech REST root.
   static const ttsBaseUri = 'https://texttospeech.googleapis.com/v1';
 
-  static const llmModel = '@cf/meta/llama-3.1-8b-instruct';
+  /// Default Workers AI model. Gemma 4 26B offers 256K context.
+  /// Override at build: `--dart-define=IA_MODEL=@cf/other/model`.
+  /// Override at runtime: `IaRouter.configure(llmModel: ...)`.
+  static const llmModel = String.fromEnvironment(
+    'IA_MODEL',
+    defaultValue: '@cf/google/gemma-4-26b-a4b-it',
+  );
+
+  /// Fallback model used when the primary returns a model-not-found or
+  /// deprecated error. Set via `--dart-define=IA_FALLBACK_MODEL=...`.
+  static const llmFallbackModel = String.fromEnvironment(
+    'IA_FALLBACK_MODEL',
+    defaultValue: '@cf/zai-org/glm-4.7-flash',
+  );
 
   /// Default English Neural2 voice.
   static const ttsVoiceEn = 'en-US-Neural2-A';
