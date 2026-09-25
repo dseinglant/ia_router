@@ -1,3 +1,17 @@
+## 0.6.1
+
+- **Breaking (model change):** Default LLM model changed from the deprecated
+  `@cf/meta/llama-3.1-8b-instruct` (8K context, deprecated 2026-05-30) to
+  `@cf/google/gemma-4-26b-a4b-it` (256K context).
+- **New:** `IaRouter.configure(llmModel: ...)` accepts an optional model
+  override at runtime.
+- **New:** Compile-time model override via `--dart-define=IA_MODEL=@cf/...`.
+- **New:** Automatic fallback to `@cf/zai-org/glm-4.7-flash` when the primary
+  model returns a model-not-found (404) or deprecated error. Override fallback
+  via `--dart-define=IA_FALLBACK_MODEL=@cf/...`.
+- Streaming parser now handles both Workers AI classic `response` field and
+  OpenAI-compatible `choices[0].delta.content` format (Gemma 4 uses the latter).
+
 ## 0.6.0
 
 - Breaking: TTS backend switched from Deepgram Aura-2 to Google Cloud

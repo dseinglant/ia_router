@@ -64,6 +64,42 @@ void main() {
       expect(result.model, RouterDefaults.publicModelId);
     });
 
+    test('configure accepts optional llmModel override', () async {
+      final mock = MockClient((request) async {
+        expect(
+          request.url.path,
+          contains('/ai/run/@cf/custom/model'),
+        );
+        return http.Response(
+          jsonEncode({
+            'success': true,
+            'result': {'response': 'custom ok'},
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      IaRouter.debugBind(
+        credentials: MemoryCredentialStore(),
+        httpClient: AiHttpClient(client: mock),
+        accountId: 'acc',
+      );
+      await IaRouter.configure(
+        llmToken: 'secret-key',
+        ttsToken: 'tts-key',
+        llmModel: '@cf/custom/model',
+      );
+
+      final result = await IaRouter.llm.complete(
+        const ChatRequest(
+          messages: [ChatMessage(role: ChatRole.user, content: 'hi')],
+        ),
+      );
+
+      expect(result.content, 'custom ok');
+    });
+
     test('llm throws AiAuthException before configure', () {
       expect(() => IaRouter.llm, throwsA(isA<AiAuthException>()));
     });
@@ -121,7 +157,7 @@ void main() {
         expect(request.method, 'POST');
         expect(
           request.url.path,
-          contains('/ai/run/@cf/meta/llama-3.1-8b-instruct'),
+          contains('/ai/run/${RouterDefaults.llmModel}'),
         );
         expect(request.headers['Authorization'], 'Bearer secret');
         final body = jsonDecode(request.body) as Map<String, dynamic>;
@@ -470,6 +506,219 @@ void main() {
 
       expect(text, '{"n":0}');
     });
+
+    test('complete falls back to fallbackModel on 404', () async {
+      final store = MemoryCredentialStore();
+      await store.write(RouterDefaults.llmCredentialSlot, 'secret');
+
+      var callCount = 0;
+      final mock = MockClient((request) async {
+        callCount++;
+        if (request.url.path.contains('@cf/primary/model')) {
+          return http.Response(
+            jsonEncode({
+              'success': false,
+              'errors': [{'message': 'Model not found'}],
+            }),
+            404,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        expect(request.url.path, contains('@cf/fallback/model'));
+        return http.Response(
+          jsonEncode({
+            'success': true,
+            'result': {'response': 'fallback ok'},
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final llm = CloudflareLlmAdapter(
+        accountId: 'acc',
+        credentials: store,
+        httpClient: AiHttpClient(client: mock),
+        runModel: '@cf/primary/model',
+        fallbackModel: '@cf/fallback/model',
+      );
+
+      final result = await llm.complete(
+        const ChatRequest(
+          messages: [ChatMessage(role: ChatRole.user, content: 'hi')],
+        ),
+      );
+
+      expect(result.content, 'fallback ok');
+      expect(callCount, 2);
+    });
+
+    test('complete falls back on deprecated error message', () async {
+      final store = MemoryCredentialStore();
+      await store.write(RouterDefaults.llmCredentialSlot, 'secret');
+
+      var callCount = 0;
+      final mock = MockClient((request) async {
+        callCount++;
+        if (callCount == 1) {
+          return http.Response(
+            jsonEncode({
+              'success': false,
+              'errors': [{'message': 'Model deprecated on 2026-05-30'}],
+            }),
+            400,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'success': true,
+            'result': {'response': 'fallback after deprecated'},
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final llm = CloudflareLlmAdapter(
+        accountId: 'acc',
+        credentials: store,
+        httpClient: AiHttpClient(client: mock),
+        runModel: '@cf/old/model',
+        fallbackModel: '@cf/new/model',
+      );
+
+      final result = await llm.complete(
+        const ChatRequest(
+          messages: [ChatMessage(role: ChatRole.user, content: 'hi')],
+        ),
+      );
+
+      expect(result.content, 'fallback after deprecated');
+      expect(callCount, 2);
+    });
+
+    test('complete throws when no fallback configured and model unavailable',
+        () async {
+      final store = MemoryCredentialStore();
+      await store.write(RouterDefaults.llmCredentialSlot, 'secret');
+
+      final mock = MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'success': false,
+            'errors': [{'message': 'Model not found'}],
+          }),
+          404,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final llm = CloudflareLlmAdapter(
+        accountId: 'acc',
+        credentials: store,
+        httpClient: AiHttpClient(client: mock),
+        runModel: '@cf/missing/model',
+      );
+
+      expect(
+        () => llm.complete(
+          const ChatRequest(
+            messages: [ChatMessage(role: ChatRole.user, content: 'hi')],
+          ),
+        ),
+        throwsA(
+          isA<AiProviderException>().having(
+            (e) => e.message,
+            'message',
+            contains('no fallback configured'),
+          ),
+        ),
+      );
+    });
+
+    test('completeStream falls back on 404', () async {
+      final store = MemoryCredentialStore();
+      await store.write(RouterDefaults.llmCredentialSlot, 'secret');
+
+      var callCount = 0;
+      final client = _FallbackStreamMockClient(
+        onPrimary: () {
+          callCount++;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode('{"errors": [{"message": "not found"}]}')),
+            404,
+          );
+        },
+        onFallback: () {
+          callCount++;
+          final controller = StreamController<List<int>>();
+          scheduleMicrotask(() async {
+            controller.add(utf8.encode('data: {"response":"stream fallback"}\n'));
+            controller.add(utf8.encode('data: [DONE]\n'));
+            await controller.close();
+          });
+          return http.StreamedResponse(controller.stream, 200);
+        },
+        primaryModel: '@cf/primary/model',
+        fallbackModel: '@cf/fallback/model',
+      );
+
+      final llm = CloudflareLlmAdapter(
+        accountId: 'acc',
+        credentials: store,
+        httpClient: AiHttpClient(client: client),
+        runModel: '@cf/primary/model',
+        fallbackModel: '@cf/fallback/model',
+      );
+
+      final chunks = await llm
+          .completeStream(
+            const ChatRequest(
+              messages: [ChatMessage(role: ChatRole.user, content: 'hi')],
+            ),
+          )
+          .toList();
+
+      expect(
+        chunks.where((c) => c.delta != null).map((c) => c.delta).join(),
+        'stream fallback',
+      );
+      expect(callCount, 2);
+    });
+
+    test('completeStream parses OpenAI-style choices[0].delta.content',
+        () async {
+      final store = MemoryCredentialStore();
+      await store.write(RouterDefaults.llmCredentialSlot, 'secret');
+
+      final streamClient = _StreamMockClient([
+        'data: {"id":"chat-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"}}]}\n',
+        'data: {"id":"chat-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" world"}}]}\n',
+        'data: {"id":"chat-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n',
+        'data: [DONE]\n',
+      ]);
+
+      final llm = CloudflareLlmAdapter(
+        accountId: 'acc',
+        credentials: store,
+        httpClient: AiHttpClient(client: streamClient),
+        runModel: '@cf/google/gemma-4-26b-a4b-it',
+      );
+
+      final text = (await llm
+              .completeStream(
+                const ChatRequest(
+                  messages: [ChatMessage(role: ChatRole.user, content: 'hi')],
+                ),
+              )
+              .where((c) => c.delta != null)
+              .map((c) => c.delta!)
+              .toList())
+          .join();
+
+      expect(text, 'Hello world');
+    });
   });
 
   group('GoogleTtsAdapter', () {
@@ -663,5 +912,31 @@ final class _StreamMockClient extends http.BaseClient {
       await controller.close();
     });
     return http.StreamedResponse(controller.stream, 200);
+  }
+}
+
+/// Mock client that returns different responses for primary vs fallback model.
+final class _FallbackStreamMockClient extends http.BaseClient {
+  _FallbackStreamMockClient({
+    required this.onPrimary,
+    required this.onFallback,
+    required this.primaryModel,
+    required this.fallbackModel,
+  });
+
+  final http.StreamedResponse Function() onPrimary;
+  final http.StreamedResponse Function() onFallback;
+  final String primaryModel;
+  final String fallbackModel;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (request.url.path.contains(primaryModel)) {
+      return onPrimary();
+    }
+    if (request.url.path.contains(fallbackModel)) {
+      return onFallback();
+    }
+    throw StateError('Unexpected model in path: ${request.url.path}');
   }
 }
