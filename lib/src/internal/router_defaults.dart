@@ -21,7 +21,7 @@ abstract final class RouterDefaults {
   /// Google Cloud Text-to-Speech REST root.
   static const ttsBaseUri = 'https://texttospeech.googleapis.com/v1';
 
-  static const llmModel = '@cf/meta/llama-3.1-8b-instruct';
+  static const llmModel = '@cf/google/gemma-4-26b-a4b-it';
 
   /// Default English Neural2 voice.
   static const ttsVoiceEn = 'en-US-Neural2-A';

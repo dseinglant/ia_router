@@ -121,7 +121,7 @@ void main() {
         expect(request.method, 'POST');
         expect(
           request.url.path,
-          contains('/ai/run/@cf/meta/llama-3.1-8b-instruct'),
+          contains('/ai/run/${RouterDefaults.llmModel}'),
         );
         expect(request.headers['Authorization'], 'Bearer secret');
         final body = jsonDecode(request.body) as Map<String, dynamic>;
