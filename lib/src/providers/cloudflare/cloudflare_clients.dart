@@ -7,9 +7,9 @@ import '../google/google_tts_adapter.dart';
 import 'cloudflare_endpoint.dart';
 import 'cloudflare_llm_adapter.dart';
 
-/// Internal composition factory (Cloudflare LLM + Google TTS).
+/// Internal composition factory (Cloudflare LLM + Gemini TTS Batch).
 abstract final class AiClients {
-  /// LLM on Cloudflare Workers AI, TTS on Google Cloud Text-to-Speech.
+  /// LLM on Cloudflare Workers AI, TTS on Gemini 3.8 Flash-Lite (Batch API).
   ///
   /// [baseUri] must be `https` unless [allowInsecureBaseUri] is true (tests).
   static AiClientPair create({

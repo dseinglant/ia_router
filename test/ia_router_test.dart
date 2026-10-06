@@ -64,6 +64,79 @@ void main() {
       expect(result.model, RouterDefaults.publicModelId);
     });
 
+    test('configureRelay sends the callback token to the relay host', () async {
+      final mock = MockClient((request) async {
+        expect(request.headers['Authorization'], 'Bearer firebase-id-token');
+        expect(request.url.host, 'relay.example');
+        expect(
+          request.url.path,
+          contains('/ai/run/${RouterDefaults.llmModel}'),
+        );
+        return http.Response(
+          jsonEncode({
+            'success': true,
+            'result': {'response': 'ok'},
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      IaRouter.debugBind(
+        httpClient: AiHttpClient(client: mock),
+        accountId: 'acc',
+      );
+      await IaRouter.configureRelay(
+        readAccessToken: () async => 'firebase-id-token',
+        llmBaseUri: 'https://relay.example/client/v4',
+        ttsBaseUri: 'https://relay.example/v1beta',
+      );
+
+      final result = await IaRouter.llm.complete(
+        const ChatRequest(
+          messages: [ChatMessage(role: ChatRole.user, content: 'hi')],
+        ),
+      );
+      expect(result.content, 'ok');
+    });
+
+    test('vendor configure is refused when releaseMode is true', () {
+      expect(
+        () => IaRouter.refuseVendorConfigure(releaseMode: true),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => IaRouter.refuseVendorConfigure(releaseMode: false),
+        returnsNormally,
+      );
+    });
+
+    test('requestTimeout bounds the default HTTP client', () async {
+      IaRouter.requestTimeout = const Duration(milliseconds: 40);
+      IaRouter.debugBind(
+        credentials: MemoryCredentialStore(),
+        transport: _HangClient(),
+        accountId: 'acc',
+      );
+      await IaRouter.configure(llmToken: 'secret-key', ttsToken: 'tts-key');
+
+      await expectLater(
+        IaRouter.llm.complete(
+          const ChatRequest(
+            messages: [ChatMessage(role: ChatRole.user, content: 'hi')],
+          ),
+        ),
+        throwsA(isA<AiNetworkException>()),
+      );
+    });
+
+    test('requestTimeout must be positive', () {
+      expect(
+        () => IaRouter.requestTimeout = Duration.zero,
+        throwsArgumentError,
+      );
+    });
+
     test('llm throws AiAuthException before configure', () {
       expect(() => IaRouter.llm, throwsA(isA<AiAuthException>()));
     });
@@ -473,7 +546,7 @@ void main() {
   });
 
   group('GoogleTtsAdapter', () {
-    test('listVoices returns Neural2 EN+ES catalog for UI', () async {
+    test('listVoices returns Gemini EN+ES catalog for UI', () async {
       final tts = GoogleTtsAdapter(credentials: MemoryCredentialStore());
 
       final voices = await tts.listVoices();
@@ -495,25 +568,49 @@ void main() {
       );
     });
 
-    test('synthesize posts Google Neural2 payload with API key', () async {
+    test('synthesize uses unary generateContent and returns WAV audio',
+        () async {
       final store = MemoryCredentialStore();
       await store.write(RouterDefaults.ttsCredentialSlot, 'g-tts-key');
 
       final audio = Uint8List.fromList([9, 8, 7]);
       final mock = MockClient((request) async {
-        expect(request.url.path, endsWith('/text:synthesize'));
-        expect(request.url.queryParameters['key'], 'g-tts-key');
         expect(request.headers['x-goog-api-key'], 'g-tts-key');
         expect(request.headers.containsKey('Authorization'), isFalse);
+        expect(request.method, 'POST');
+        expect(
+          request.url.path,
+          endsWith('/models/${RouterDefaults.ttsModel}:generateContent'),
+        );
         final body = jsonDecode(request.body) as Map<String, dynamic>;
-        expect(body['input'], {'text': 'hola'});
-        expect(body['voice'], {
-          'languageCode': 'es-US',
-          'name': RouterDefaults.ttsVoiceEs,
-        });
-        expect(body['audioConfig'], {'audioEncoding': 'MP3'});
+        expect(body.containsKey('batch'), isFalse);
+        final parts =
+            ((body['contents'] as List).first as Map)['parts'] as List;
+        expect((parts.first as Map)['text'], 'hola');
+        final speech =
+            (body['generationConfig'] as Map)['speechConfig'] as Map;
+        expect(
+          ((speech['voiceConfig'] as Map)['prebuiltVoiceConfig']
+              as Map)['voiceName'],
+          RouterDefaults.ttsVoiceEs,
+        );
         return http.Response(
-          jsonEncode({'audioContent': base64Encode(audio)}),
+          jsonEncode({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {
+                      'inlineData': {
+                        'mimeType': 'audio/wav',
+                        'data': base64Encode(audio),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
           200,
           headers: {'content-type': 'application/json'},
         );
@@ -522,28 +619,45 @@ void main() {
       final tts = GoogleTtsAdapter(
         credentials: store,
         httpClient: AiHttpClient(client: mock),
+        sleeper: (_) async {},
       );
 
       final result = await tts.synthesize(
         const TtsRequest(text: 'hola', voice: 'aquila'),
       );
-      expect(result.audioBytes, audio);
-      expect(result.contentType, 'audio/mpeg');
+      expect(result.audioBytes, wrapGeminiPcmAsWav(audio));
+      expect(result.contentType, 'audio/wav');
     });
 
-    test('synthesize defaults Spanish language to es-US-Neural2-A', () async {
+    test('synthesize defaults Spanish language to Aoede', () async {
       final store = MemoryCredentialStore();
       await store.write(RouterDefaults.ttsCredentialSlot, 'g-tts-key');
 
       final audio = Uint8List.fromList([1, 2, 3, 4]);
       final mock = MockClient((request) async {
         final body = jsonDecode(request.body) as Map<String, dynamic>;
-        expect(body['voice'], {
-          'languageCode': 'es-US',
-          'name': 'es-US-Neural2-A',
-        });
+        final voice = ((((body['generationConfig'] as Map)['speechConfig']
+                as Map)['voiceConfig'] as Map)['prebuiltVoiceConfig']
+            as Map)['voiceName'];
+        expect(voice, 'Aoede');
+        expect(
+          request.url.path,
+          endsWith(':generateContent'),
+        );
         return http.Response(
-          jsonEncode({'audioContent': base64Encode(audio)}),
+          jsonEncode({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {
+                      'inlineData': {'data': base64Encode(audio)},
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
           200,
           headers: {'content-type': 'application/json'},
         );
@@ -552,29 +666,42 @@ void main() {
       final tts = GoogleTtsAdapter(
         credentials: store,
         httpClient: AiHttpClient(client: mock),
+        sleeper: (_) async {},
       );
 
       final result = await tts.synthesize(
         const TtsRequest(text: 'hola', language: 'es'),
       );
 
-      expect(result.audioBytes, audio);
-      expect(result.contentType, 'audio/mpeg');
+      expect(result.audioBytes, wrapGeminiPcmAsWav(audio));
+      expect(result.contentType, 'audio/wav');
     });
 
-    test('synthesize defaults English language to en-US-Neural2-A', () async {
+    test('synthesize defaults English language to Kore', () async {
       final store = MemoryCredentialStore();
       await store.write(RouterDefaults.ttsCredentialSlot, 'g-tts-key');
 
       final audio = Uint8List.fromList([5, 6, 7]);
       final mock = MockClient((request) async {
         final body = jsonDecode(request.body) as Map<String, dynamic>;
-        expect(body['voice'], {
-          'languageCode': 'en-US',
-          'name': 'en-US-Neural2-A',
-        });
+        final voice = ((((body['generationConfig'] as Map)['speechConfig']
+                as Map)['voiceConfig'] as Map)['prebuiltVoiceConfig']
+            as Map)['voiceName'];
+        expect(voice, 'Kore');
         return http.Response(
-          jsonEncode({'audioContent': base64Encode(audio)}),
+          jsonEncode({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {
+                      'inlineData': {'data': base64Encode(audio)},
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
           200,
           headers: {'content-type': 'application/json'},
         );
@@ -583,27 +710,42 @@ void main() {
       final tts = GoogleTtsAdapter(
         credentials: store,
         httpClient: AiHttpClient(client: mock),
+        sleeper: (_) async {},
       );
 
       final result = await tts.synthesize(
         const TtsRequest(text: 'hello', language: 'en'),
       );
 
-      expect(result.audioBytes, audio);
-      expect(result.contentType, 'audio/mpeg');
+      expect(result.audioBytes, wrapGeminiPcmAsWav(audio));
+      expect(result.contentType, 'audio/wav');
     });
 
-    test('legacy es-MX-Neural2-A aliases to es-US-Neural2-A', () async {
+    test('legacy es-MX-Neural2-A aliases to Aoede', () async {
       final store = MemoryCredentialStore();
       await store.write(RouterDefaults.ttsCredentialSlot, 'g-tts-key');
 
       final audio = Uint8List.fromList([8, 9]);
       final mock = MockClient((request) async {
         final body = jsonDecode(request.body) as Map<String, dynamic>;
-        expect((body['voice'] as Map)['name'], 'es-US-Neural2-A');
-        expect((body['voice'] as Map)['languageCode'], 'es-US');
+        final voice = ((((body['generationConfig'] as Map)['speechConfig']
+                as Map)['voiceConfig'] as Map)['prebuiltVoiceConfig']
+            as Map)['voiceName'];
+        expect(voice, 'Aoede');
         return http.Response(
-          jsonEncode({'audioContent': base64Encode(audio)}),
+          jsonEncode({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {
+                      'inlineData': {'data': base64Encode(audio)},
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
           200,
           headers: {'content-type': 'application/json'},
         );
@@ -612,20 +754,358 @@ void main() {
       final tts = GoogleTtsAdapter(
         credentials: store,
         httpClient: AiHttpClient(client: mock),
+        sleeper: (_) async {},
       );
 
       final result = await tts.synthesize(
         const TtsRequest(text: 'hola', voice: 'es-MX-Neural2-A'),
       );
-      expect(result.audioBytes, audio);
+      expect(result.audioBytes, wrapGeminiPcmAsWav(audio));
     });
 
-    test('decodeGoogleTtsJsonResponse rejects missing audioContent', () {
+    test('synthesize maps unknown voice names to language default', () async {
+      final store = MemoryCredentialStore();
+      await store.write(RouterDefaults.ttsCredentialSlot, 'g-tts-key');
+
+      final audio = Uint8List.fromList([3, 3]);
+      final mock = MockClient((request) async {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final voice = ((((body['generationConfig'] as Map)['speechConfig']
+                as Map)['voiceConfig'] as Map)['prebuiltVoiceConfig']
+            as Map)['voiceName'];
+        // Stale MeloTTS "Sarah" must not reach Gemini (400).
+        expect(voice, 'Aoede');
+        return http.Response(
+          jsonEncode({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {
+                      'inlineData': {'data': base64Encode(audio)},
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final tts = GoogleTtsAdapter(
+        credentials: store,
+        httpClient: AiHttpClient(client: mock),
+        sleeper: (_) async {},
+      );
+
+      final result = await tts.synthesize(
+        const TtsRequest(text: 'hola', language: 'es', voice: 'Sarah'),
+      );
+      expect(result.audioBytes, wrapGeminiPcmAsWav(audio));
+    });
+
+    test('synthesize sends speech_metadata.style when style is set', () async {
+      final store = MemoryCredentialStore();
+      await store.write(RouterDefaults.ttsCredentialSlot, 'g-tts-key');
+
+      final audio = Uint8List.fromList([1]);
+      final mock = MockClient((request) async {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final part =
+            (((body['contents'] as List).first as Map)['parts'] as List).first
+                as Map;
+        expect(part['text'], 'hola');
+        expect((part['speech_metadata'] as Map)['style'], 'warm and clear');
+        return http.Response(
+          jsonEncode({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {
+                      'inlineData': {'data': base64Encode(audio)},
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final tts = GoogleTtsAdapter(
+        credentials: store,
+        httpClient: AiHttpClient(client: mock),
+        sleeper: (_) async {},
+      );
+
+      await tts.synthesize(
+        const TtsRequest(
+          text: 'hola',
+          language: 'es',
+          style: 'warm and clear',
+        ),
+      );
+    });
+
+    test('synthesizeBatch packs multiple requests in one job', () async {
+      final store = MemoryCredentialStore();
+      await store.write(RouterDefaults.ttsCredentialSlot, 'g-tts-key');
+
+      final a = Uint8List.fromList([1]);
+      final b = Uint8List.fromList([2, 3]);
+      final mock = MockClient((request) async {
+        if (request.method == 'POST') {
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          final requests = (((body['batch'] as Map)['input_config']
+                  as Map)['requests'] as Map)['requests'] as List;
+          expect(requests, hasLength(2));
+          return http.Response(
+            jsonEncode({'name': 'batches/multi'}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'done': true,
+            'metadata': {'state': 'JOB_STATE_SUCCEEDED'},
+            'response': {
+              'inlinedResponses': [
+                {
+                  'response': {
+                    'candidates': [
+                      {
+                        'content': {
+                          'parts': [
+                            {'inlineData': {'data': base64Encode(a)}},
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+                {
+                  'response': {
+                    'candidates': [
+                      {
+                        'content': {
+                          'parts': [
+                            {'inlineData': {'data': base64Encode(b)}},
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final tts = GoogleTtsAdapter(
+        credentials: store,
+        httpClient: AiHttpClient(client: mock),
+        sleeper: (_) async {},
+      );
+
+      final results = await tts.synthesizeBatch(const [
+        TtsRequest(text: 'one', language: 'en'),
+        TtsRequest(text: 'dos', language: 'es'),
+      ]);
+      expect(results.map((r) => r.audioBytes), [
+        wrapGeminiPcmAsWav(a),
+        wrapGeminiPcmAsWav(b),
+      ]);
+    });
+
+    // Gemini Developer API returns BATCH_STATE_*; treating it as failure
+    // was the podcast TTS crash (succeeded job → StateError in the host).
+    test('synthesizeBatch accepts BATCH_STATE_SUCCEEDED from Gemini Batch API',
+        () async {
+      final store = MemoryCredentialStore();
+      await store.write(RouterDefaults.ttsCredentialSlot, 'g-tts-key');
+
+      final audio = Uint8List.fromList([4, 2, 0]);
+      final mock = MockClient((request) async {
+        if (request.method == 'POST') {
+          expect(
+            request.url.path,
+            endsWith(':batchGenerateContent'),
+          );
+          return http.Response(
+            jsonEncode({'name': 'batches/batch-state'}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'name': 'batches/batch-state',
+            'done': true,
+            'metadata': {'state': 'BATCH_STATE_SUCCEEDED'},
+            'response': {
+              'inlinedResponses': [
+                {
+                  'response': {
+                    'candidates': [
+                      {
+                        'content': {
+                          'parts': [
+                            {
+                              'inlineData': {
+                                'mimeType': 'audio/wav',
+                                'data': base64Encode(audio),
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final tts = GoogleTtsAdapter(
+        credentials: store,
+        httpClient: AiHttpClient(client: mock),
+        sleeper: (_) async {},
+      );
+
+      final results = await tts.synthesizeBatch(const [
+        TtsRequest(text: 'hola', language: 'es'),
+      ]);
+      expect(results.single.audioBytes, wrapGeminiPcmAsWav(audio));
+      expect(results.single.contentType, 'audio/wav');
+    });
+
+    // REST Batch nests the list: response.inlinedResponses.inlinedResponses[].
+    // Treating the outer map as empty caused "Unexpected TTS batch result shape".
+    test('synthesizeBatch unwraps nested inlinedResponses map from Batch API',
+        () async {
+      final store = MemoryCredentialStore();
+      await store.write(RouterDefaults.ttsCredentialSlot, 'g-tts-key');
+
+      final audio = Uint8List.fromList([7, 7, 7, 7]);
+      final mock = MockClient((request) async {
+        if (request.method == 'POST') {
+          return http.Response(
+            jsonEncode({'name': 'batches/nested'}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'name': 'batches/nested',
+            'done': true,
+            'metadata': {'state': 'BATCH_STATE_SUCCEEDED'},
+            'response': {
+              'inlinedResponses': {
+                'inlinedResponses': [
+                  {
+                    'response': {
+                      'candidates': [
+                        {
+                          'content': {
+                            'parts': [
+                              {
+                                'inlineData': {
+                                  'mimeType': 'audio/L16;codec=pcm;rate=24000',
+                                  'data': base64Encode(audio),
+                                },
+                              },
+                            ],
+                          },
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final tts = GoogleTtsAdapter(
+        credentials: store,
+        httpClient: AiHttpClient(client: mock),
+        sleeper: (_) async {},
+      );
+
+      final results = await tts.synthesizeBatch(const [
+        TtsRequest(text: 'hola', language: 'es'),
+      ]);
+      expect(results.single.audioBytes, wrapGeminiPcmAsWav(audio));
+      expect(results.single.contentType, 'audio/wav');
+    });
+
+    test('decodeGeminiBatchAudioResponse surfaces item error message', () {
       expect(
-        () => decodeGoogleTtsJsonResponse(
-          Uint8List.fromList(
-            utf8.encode(jsonEncode({'error': {'message': 'boom'}})),
+        () => decodeGeminiBatchAudioResponse(
+          {
+            'response': {
+              'inlinedResponses': [
+                {
+                  'error': {
+                    'code': 3,
+                    'message': 'Model does not support AUDIO modality',
+                  },
+                },
+              ],
+            },
+          },
+          index: 0,
+        ),
+        throwsA(
+          isA<AiProviderException>().having(
+            (e) => e.message,
+            'message',
+            contains('Model does not support AUDIO modality'),
           ),
+        ),
+      );
+    });
+
+    test('decodeGeminiBatchAudioResponse rejects missing audio', () {
+      expect(
+        () => decodeGeminiBatchAudioResponse(
+          {
+            'response': {
+              'inlinedResponses': [
+                {
+                  'response': {
+                    'candidates': [
+                      {
+                        'content': {
+                          'parts': [
+                            {'text': 'no audio'},
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+          index: 0,
         ),
         throwsA(isA<AiProviderException>()),
       );
@@ -645,6 +1125,14 @@ void main() {
       expect(pair.tts, isA<GoogleTtsAdapter>());
     });
   });
+}
+
+/// [http.Client] whose [send] never completes — forces the request timeout.
+final class _HangClient extends http.BaseClient {
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    return Completer<http.StreamedResponse>().future;
+  }
 }
 
 /// Minimal [http.Client] that supports [send] for SSE tests.

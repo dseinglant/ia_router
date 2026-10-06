@@ -1,4 +1,4 @@
-/// Hardened Google Cloud TTS base URI validation.
+/// Hardened Gemini API base URI validation (Google AI / Generative Language).
 void validateGoogleTtsBaseUri(
   String baseUri, {
   bool allowInsecure = false,
@@ -30,24 +30,88 @@ void validateGoogleTtsBaseUri(
   }
 }
 
-/// Builds `…/text:synthesize` under [baseUri], optionally with API [key].
-Uri buildGoogleSynthesizeUri({
-  required String baseUri,
-  String? key,
-}) {
+String _normalizedBasePath(String baseUri) {
   final base = Uri.parse(baseUri);
   var basePath = base.path;
   if (basePath.endsWith('/')) {
     basePath = basePath.substring(0, basePath.length - 1);
   }
+  return basePath;
+}
 
+/// Builds `…/models/{model}:generateContent` under [baseUri].
+Uri buildGeminiTtsGenerateUri({
+  required String baseUri,
+  required String model,
+}) {
+  if (model.contains('://') ||
+      model.contains('..') ||
+      model.contains('//') ||
+      model.contains('?') ||
+      model.contains('#') ||
+      model.startsWith('/') ||
+      model.endsWith('/') ||
+      model.isEmpty) {
+    throw ArgumentError.value(model, 'model', 'invalid TTS model id');
+  }
+
+  final base = Uri.parse(baseUri);
+  final basePath = _normalizedBasePath(baseUri);
   return Uri(
     scheme: base.scheme,
     host: base.host,
     port: base.hasPort ? base.port : null,
-    path: '$basePath/text:synthesize',
-    queryParameters: {
-      if (key != null && key.isNotEmpty) 'key': key,
-    },
+    path: '$basePath/models/$model:generateContent',
+  );
+}
+
+/// Builds `…/models/{model}:batchGenerateContent` under [baseUri].
+Uri buildGeminiTtsBatchUri({
+  required String baseUri,
+  required String model,
+}) {
+  if (model.contains('://') ||
+      model.contains('..') ||
+      model.contains('//') ||
+      model.contains('?') ||
+      model.contains('#') ||
+      model.startsWith('/') ||
+      model.endsWith('/') ||
+      model.isEmpty) {
+    throw ArgumentError.value(model, 'model', 'invalid TTS model id');
+  }
+
+  final base = Uri.parse(baseUri);
+  final basePath = _normalizedBasePath(baseUri);
+  return Uri(
+    scheme: base.scheme,
+    host: base.host,
+    port: base.hasPort ? base.port : null,
+    path: '$basePath/models/$model:batchGenerateContent',
+  );
+}
+
+/// Builds `…/{batchName}` for polling (`batches/{id}`).
+Uri buildGeminiBatchStatusUri({
+  required String baseUri,
+  required String batchName,
+}) {
+  final trimmed = batchName.trim();
+  if (trimmed.isEmpty ||
+      trimmed.contains('://') ||
+      trimmed.contains('..') ||
+      trimmed.contains('?') ||
+      trimmed.contains('#') ||
+      trimmed.startsWith('/')) {
+    throw ArgumentError.value(batchName, 'batchName', 'invalid batch name');
+  }
+
+  final base = Uri.parse(baseUri);
+  final basePath = _normalizedBasePath(baseUri);
+  return Uri(
+    scheme: base.scheme,
+    host: base.host,
+    port: base.hasPort ? base.port : null,
+    path: '$basePath/$trimmed',
   );
 }

@@ -1,3 +1,24 @@
+## 0.8.0
+
+- Breaking: release builds must call `IaRouter.configureRelay`.
+  `configure(llmToken:, ttsToken:)` and `ensureReady()` throw in release.
+  Debug builds still accept vendor keys.
+- `configureRelay` deletes vendor keys left in secure storage by older versions.
+- Server half ships as `relay/` (`ia-router-relay`). Each host deploys it
+  to its own Firebase project. The package does not embed a relay URL or a vendor key.
+
+## 0.7.0
+
+- Hosts can set `IaRouter.requestTimeout` before `configure` / `ensureReady`
+  (default 60s) so long LLM calls can use the host's chat deadline.
+- Breaking: TTS backend switched from Google Cloud Neural2 to Gemini
+  3.8 Flash-Lite TTS (`gemini-3.8-flash-lite-tts`) via the Batch API.
+- Default voices are prebuilt `Kore` (en) / `Aoede` (es). Legacy ids
+  (`luna`, `aquila`, Neural2 names) still alias.
+- Audio default is WAV (`audio/wav`); Gemini 3.8 TTS has no MP3 container.
+- New `TtsClient.synthesizeBatch` for multi-utterance batch jobs.
+- `ttsToken` must be a Gemini API key (`x-goog-api-key`).
+
 ## 0.6.0
 
 - Breaking: TTS backend switched from Deepgram Aura-2 to Google Cloud

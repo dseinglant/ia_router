@@ -166,14 +166,40 @@ void main() {
       expect(networkHits, 0);
     });
 
-    test('buildGoogleSynthesizeUri embeds API key as query only', () {
-      final uri = buildGoogleSynthesizeUri(
-        baseUri: 'https://texttospeech.googleapis.com/v1',
-        key: 'secret-key',
+    test('buildGeminiTtsGenerateUri embeds model path only', () {
+      final uri = buildGeminiTtsGenerateUri(
+        baseUri: 'https://generativelanguage.googleapis.com/v1beta',
+        model: 'gemini-3.8-flash-lite-tts',
       );
-      expect(uri.path, '/v1/text:synthesize');
-      expect(uri.queryParameters['key'], 'secret-key');
+      expect(
+        uri.path,
+        '/v1beta/models/gemini-3.8-flash-lite-tts:generateContent',
+      );
+      expect(uri.hasQuery, isFalse);
       expect(uri.fragment, isEmpty);
+    });
+
+    test('buildGeminiTtsBatchUri embeds model path only', () {
+      final uri = buildGeminiTtsBatchUri(
+        baseUri: 'https://generativelanguage.googleapis.com/v1beta',
+        model: 'gemini-3.8-flash-lite-tts',
+      );
+      expect(
+        uri.path,
+        '/v1beta/models/gemini-3.8-flash-lite-tts:batchGenerateContent',
+      );
+      expect(uri.hasQuery, isFalse);
+      expect(uri.fragment, isEmpty);
+    });
+
+    test('buildGeminiBatchStatusUri rejects path traversal', () {
+      expect(
+        () => buildGeminiBatchStatusUri(
+          baseUri: 'https://generativelanguage.googleapis.com/v1beta',
+          batchName: '../evil',
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
     });
   });
 

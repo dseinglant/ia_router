@@ -19,6 +19,30 @@ final class AiHttpClient {
 
   void close() => _client.close();
 
+  Future<http.Response> getJson({
+    required Uri uri,
+    String? bearerToken,
+    Map<String, String>? headers,
+  }) async {
+    try {
+      return await _client
+          .get(
+            uri,
+            headers: {
+              if (bearerToken != null && bearerToken.isNotEmpty)
+                'Authorization': 'Bearer $bearerToken',
+              'Content-Type': 'application/json',
+              ...?headers,
+            },
+          )
+          .timeout(timeout);
+    } on TimeoutException catch (e) {
+      throw AiNetworkException('HTTP request timed out', cause: e);
+    } on http.ClientException catch (e) {
+      throw AiNetworkException('HTTP request failed', cause: e);
+    }
+  }
+
   Future<http.Response> postJson({
     required Uri uri,
     required Map<String, dynamic> body,

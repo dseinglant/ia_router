@@ -1,6 +1,6 @@
 name: ia_router
-description: Provider-blind LLM/TTS client. Hosts pass an API key only.
-version: 0.6.0
+description: Provider-blind LLM/TTS client. Release builds call a host relay; debug builds may pass API keys.
+version: 0.8.0
 homepage: https://github.com/dseinglant/ia_router
 
 environment:

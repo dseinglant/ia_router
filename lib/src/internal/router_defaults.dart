@@ -18,16 +18,17 @@ abstract final class RouterDefaults {
 
   static const baseUri = 'https://api.cloudflare.com/client/v4';
 
-  /// Google Cloud Text-to-Speech REST root.
-  static const ttsBaseUri = 'https://texttospeech.googleapis.com/v1';
+  /// Gemini API REST root (TTS Batch + Interactions share this host).
+  static const ttsBaseUri = 'https://generativelanguage.googleapis.com/v1beta';
 
   static const llmModel = '@cf/google/gemma-4-26b-a4b-it';
 
-  /// Default English Neural2 voice.
-  static const ttsVoiceEn = 'en-US-Neural2-A';
+  /// Gemini TTS model used for Batch speech generation.
+  static const ttsModel = 'gemini-3.8-flash-lite-tts';
 
-  /// Default Spanish Neural2 voice.
-  ///
-  /// Google has no `es-MX-Neural2-*`; closest LatAm Neural2 is `es-US`.
-  static const ttsVoiceEs = 'es-US-Neural2-A';
+  /// Default English prebuilt voice.
+  static const ttsVoiceEn = 'Kore';
+
+  /// Default Spanish prebuilt voice.
+  static const ttsVoiceEs = 'Aoede';
 }

@@ -31,12 +31,17 @@ class TtsRequest {
     this.voice,
     this.format,
     this.language,
+    this.style,
   });
 
   final String text;
   final String? voice;
   final String? format;
   final String? language;
+
+  /// Turn-level delivery notes for Gemini 3.8+ (`speech_metadata.style`).
+  /// Never concatenate into [text] — the model speaks the transcript verbatim.
+  final String? style;
 }
 
 /// Raw audio payload from a TTS provider.

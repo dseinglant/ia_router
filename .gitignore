@@ -42,3 +42,7 @@ credentials.json
 .flutter-plugins-dependencies
 /build/
 /coverage/
+
+# Relay package build output
+/relay/node_modules/
+/relay/lib/
