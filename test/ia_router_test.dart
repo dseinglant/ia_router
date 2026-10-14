@@ -546,26 +546,21 @@ void main() {
   });
 
   group('GoogleTtsAdapter', () {
-    test('listVoices returns Gemini EN+ES catalog for UI', () async {
+    test('listVoices returns every Gemini prebuilt voice for en and es',
+        () async {
       final tts = GoogleTtsAdapter(credentials: MemoryCredentialStore());
 
       final voices = await tts.listVoices();
-      expect(voices, hasLength(2));
-      expect(
-        voices.map((v) => v.id),
-        containsAll([
-          RouterDefaults.ttsVoiceEn,
-          RouterDefaults.ttsVoiceEs,
-        ]),
-      );
-      expect(
-        voices.where((v) => v.language == 'es').map((v) => v.id),
-        contains(RouterDefaults.ttsVoiceEs),
-      );
-      expect(
-        voices.where((v) => v.language == 'en').map((v) => v.id),
-        contains(RouterDefaults.ttsVoiceEn),
-      );
+      final en = voices.where((v) => v.language == 'en').map((v) => v.id);
+      final es = voices.where((v) => v.language == 'es').map((v) => v.id);
+
+      // 30 prebuilt names, duplicated so a language filter still shows all.
+      expect(voices, hasLength(60));
+      expect(en, hasLength(30));
+      expect(es.toSet(), en.toSet());
+      expect(en.first, RouterDefaults.ttsVoiceEn);
+      expect(es.first, RouterDefaults.ttsVoiceEs);
+      expect(en, containsAll(['Puck', 'Charon', 'Sulafat']));
     });
 
     test('synthesize uses unary generateContent and returns WAV audio',
@@ -759,6 +754,49 @@ void main() {
 
       final result = await tts.synthesize(
         const TtsRequest(text: 'hola', voice: 'es-MX-Neural2-A'),
+      );
+      expect(result.audioBytes, wrapGeminiPcmAsWav(audio));
+    });
+
+    test('synthesize keeps a catalog prebuilt voice instead of the default',
+        () async {
+      final store = MemoryCredentialStore();
+      await store.write(RouterDefaults.ttsCredentialSlot, 'g-tts-key');
+
+      final audio = Uint8List.fromList([4, 4]);
+      final mock = MockClient((request) async {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final voice = ((((body['generationConfig'] as Map)['speechConfig']
+                as Map)['voiceConfig'] as Map)['prebuiltVoiceConfig']
+            as Map)['voiceName'];
+        expect(voice, 'Puck');
+        return http.Response(
+          jsonEncode({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {
+                      'inlineData': {'data': base64Encode(audio)},
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final tts = GoogleTtsAdapter(
+        credentials: store,
+        httpClient: AiHttpClient(client: mock),
+        sleeper: (_) async {},
+      );
+
+      final result = await tts.synthesize(
+        const TtsRequest(text: 'hola', language: 'es', voice: 'Puck'),
       );
       expect(result.audioBytes, wrapGeminiPcmAsWav(audio));
     });

@@ -292,18 +292,62 @@ final class GoogleTtsAdapter implements TtsClient {
   final Duration pollInterval;
   final Duration pollTimeout;
 
-  static const List<TtsVoice> _catalog = [
-    TtsVoice(
-      id: RouterDefaults.ttsVoiceEn,
-      label: 'Kore (en)',
-      language: 'en',
-    ),
-    TtsVoice(
-      id: RouterDefaults.ttsVoiceEs,
-      label: 'Aoede (es)',
-      language: 'es',
-    ),
+  /// Gemini prebuilt studio voices. Multilingual: each name is listed for
+  /// `en` and `es` because hosts filter [TtsVoice.language]. The historical
+  /// default leads each language so `firstWhere` still returns Kore / Aoede.
+  /// Source: https://ai.google.dev/gemini-api/docs/speech-generation
+  static const List<(String, String)> _prebuiltVoices = [
+    ('Zephyr', 'Bright'),
+    ('Puck', 'Upbeat'),
+    ('Charon', 'Informative'),
+    ('Kore', 'Firm'),
+    ('Fenrir', 'Excitable'),
+    ('Leda', 'Youthful'),
+    ('Orus', 'Firm'),
+    ('Aoede', 'Breezy'),
+    ('Callirrhoe', 'Easy-going'),
+    ('Autonoe', 'Bright'),
+    ('Enceladus', 'Breathy'),
+    ('Iapetus', 'Clear'),
+    ('Umbriel', 'Easy-going'),
+    ('Algieba', 'Smooth'),
+    ('Despina', 'Smooth'),
+    ('Erinome', 'Clear'),
+    ('Algenib', 'Gravelly'),
+    ('Rasalgethi', 'Informative'),
+    ('Laomedeia', 'Upbeat'),
+    ('Achernar', 'Soft'),
+    ('Alnilam', 'Firm'),
+    ('Schedar', 'Even'),
+    ('Gacrux', 'Mature'),
+    ('Pulcherrima', 'Forward'),
+    ('Achird', 'Friendly'),
+    ('Zubenelgenubi', 'Casual'),
+    ('Vindemiatrix', 'Gentle'),
+    ('Sadachbia', 'Lively'),
+    ('Sadaltager', 'Knowledgeable'),
+    ('Sulafat', 'Warm'),
   ];
+
+  static final List<TtsVoice> _catalog = List<TtsVoice>.unmodifiable([
+    ..._voicesForLanguage('en', RouterDefaults.ttsVoiceEn),
+    ..._voicesForLanguage('es', RouterDefaults.ttsVoiceEs),
+  ]);
+
+  static List<TtsVoice> _voicesForLanguage(String language, String leadId) {
+    final ordered = [
+      ..._prebuiltVoices.where((voice) => voice.$1 == leadId),
+      ..._prebuiltVoices.where((voice) => voice.$1 != leadId),
+    ];
+    return [
+      for (final voice in ordered)
+        TtsVoice(
+          id: voice.$1,
+          label: '${voice.$1} (${voice.$2})',
+          language: language,
+        ),
+    ];
+  }
 
   /// Previous package voice ids → Gemini prebuilt voice names.
   static const Map<String, String> _legacyVoiceAliases = {
